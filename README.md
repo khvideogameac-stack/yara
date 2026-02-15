@@ -44,7 +44,7 @@ After deployment:
 | Rules | `C:\Program Files\yara\rules\malware_index.yar` |
 | Active response | `C:\Program Files (x86)\ossec-agent\active-response\bin\yara-scan.ps1` |
 | Update script | `C:\Program Files\yara\update-rules.ps1` |
-| Logs | `C:\Program Files\yara\deploy.log` |
+| Logs | `C:\Program Files\yara\update.log` |
 
 ## Rule Updates
 
