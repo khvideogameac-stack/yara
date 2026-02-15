@@ -27,7 +27,7 @@ try {
     # Parse Wazuh alert JSON
     $alert = $inputData | ConvertFrom-Json
     $filePath = $alert.parameters.alert.syscheck.path
-    
+
     if ([string]::IsNullOrEmpty($filePath)) {
         exit 0
     }
@@ -53,76 +53,50 @@ if (-not (Test-Path $rulesFile)) {
 }
 
 # Skip certain extensions and paths to reduce noise
-$skipExtensions = @('.log', '.tmp', '.etl', '.evtx', '.db', '.db-journal', '.ldb')
+$skipExtensions = @('.log', '.tmp', '.etl', '.evtx', '.db', '.db-journal')
 $skipPaths = @(
     'C:\Windows\Temp\wct',
     'C:\Windows\ServiceProfiles',
     'C:\Windows\Logs',
     'C:\Windows\System32\winevt',
-    'C:\Windows\System32\config',
-    'C:\Windows\System32\LogFiles',
-    'C:\ProgramData\Microsoft\Windows Defender',
-    'C:\Program Files\yara\',
-    'C:\Program Files (x86)\ossec-agent\queue',
-    'C:\Program Files (x86)\ossec-agent\logs'
+    'C:\ProgramData\Microsoft\Windows Defender'
 )
 
-# Check extension
 $extension = [System.IO.Path]::GetExtension($filePath).ToLower()
 if ($extension -in $skipExtensions) {
     exit 0
 }
 
-# Check path prefixes
 foreach ($skipPath in $skipPaths) {
     if ($filePath -like "$skipPath*") {
         exit 0
     }
 }
 
-# Check file size (skip very large files to avoid performance impact)
-try {
-    $fileInfo = Get-Item $filePath -ErrorAction Stop
-    $maxSizeMB = 50
-    if ($fileInfo.Length -gt ($maxSizeMB * 1MB)) {
-        Write-ScanLog "SKIP: File too large ($([math]::Round($fileInfo.Length/1MB, 2)) MB): $filePath"
-        exit 0
-    }
-}
-catch {
-    # File may have been deleted or is inaccessible
-    exit 0
-}
-
 # Perform YARA scan
 try {
     Write-ScanLog "Scanning: $filePath"
-    
-    # Run YARA with timeout, limit matches
-    $result = & $yaraExe -w -r -m $rulesFile $filePath 2>&1 | Select-Object -First 10
-    
+
+    $result = & $yaraExe -w -r $rulesFile $filePath 2>&1 | Select-Object -First 10
+
     if ($result -and $result -notmatch "error" -and $result.Length -gt 0) {
         foreach ($match in $result) {
-            if (-not [string]::IsNullOrWhiteSpace($match) -and $match -notmatch "^warning:") {
-                # Parse rule name from result (format: "RuleName [meta] filepath")
-                $parts = $match -split '\s+', 2
+            if (-not [string]::IsNullOrWhiteSpace($match)) {
+                # Parse rule name from result (format: "RuleName filepath")
+                $parts = $match -split ' ', 2
                 $ruleName = $parts[0]
-                
-                if ([string]::IsNullOrEmpty($ruleName)) {
-                    continue
-                }
-                
+
                 # Log match
                 Write-ScanLog "MATCH: $ruleName on $filePath"
-                
-                # Write to Windows Event Log for Wazuh to collect
+
+                # Write to Windows Event Log for Wazuh
                 $eventMessage = "wazuh-yara: $ruleName $filePath"
-                
+
                 try {
-                    Write-EventLog -LogName Application -Source "YARA" -EventId 1001 -EntryType Warning -Message $eventMessage
+                    Write-EventLog -LogName Application -Source "YARA" -EventID 1001 -EntryType Warning -Message $eventMessage
                 }
                 catch {
-                    # Fallback: write to separate log file that Wazuh can monitor via localfile
+                    # Fallback: write to separate log file that Wazuh can monitor
                     $alertLog = "C:\Program Files\yara\alerts.log"
                     $alertEntry = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | YARA | $ruleName | $filePath"
                     $alertEntry | Out-File -FilePath $alertLog -Append -Encoding UTF8
